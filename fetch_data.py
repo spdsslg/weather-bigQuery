@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import requests
 import json
 from pathlib import Path
+import datetime
 
 load_dotenv()
 
@@ -16,9 +17,10 @@ headers = {
 }
 
 response = requests.get(url, headers=headers)
-Path("./loaded").mkdir(parents=True, exist_ok=True)
-raw_files_path = f"./loaded/weather_{response.json()['data']['time']}.json"
-with open(raw_files_path, 'w', encoding='utf-8') as file:
+dt = datetime.datetime.strptime(response.json()['data']['time'], '%Y-%m-%dT%H:%M:%SZ')
+raw_file_path = f"./include/weather/year={dt.year}/month={dt.month}/day={dt.day}/hour={dt.hour}"
+Path(raw_file_path).mkdir(parents=True, exist_ok=True)
+with open(f"{raw_file_path}/file_{dt.minute}minute.json", 'w', encoding='utf-8') as file:
     json.dump(response.json(), file, ensure_ascii=False, indent=4)
 
-print(raw_files_path)
+print(raw_file_path)
