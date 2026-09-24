@@ -1,8 +1,28 @@
 from airflow.sdk import dag, task, TaskInstance #type:ignore
+import pendulum
 from pendulum import datetime
 import glob
 import pandas as pd
 import json
+import logging
+
+def validate_json(current_json, json_filename, logger):
+
+    #structure validation
+    if(not isinstance(current_json.get('data'), dict) 
+       or not isinstance(current_json.get('location'), dict)
+       or not isinstance(current_json.get('data',{}).get('values'), dict)): 
+        logger.warning("File %s has incorrect structure", json_filename)
+        return False
+
+    values_dict = current_json['data']['values']
+    #validate existing value fields types
+    for col in values_dict:
+        col_value = values_dict.get(col)
+        if type(col_value) not in (int, float):
+            return False
+
+    return True
 
 @dag(start_date=datetime(2026,9,23),
      schedule='@hourly')
@@ -10,22 +30,42 @@ def load_to_silver():
 
     @task
     def transform_and_load(run_id=None, data_interval_start=None):
+        logger = logging.getLogger(__name__)
+
         filename = f"weather_hourly_{run_id}"
         dt = data_interval_start
 
         previous_hour_files = glob.glob(f'/opt/airflow/include/weather/year={dt.year}/month={dt.month}/day={dt.day}/hour={dt.hour}/*.json') #type:ignore
         if not previous_hour_files:
-            print("No JSONs for the previous hour!")
+            logger.warning("No JSONs for the previous hour!")
             return
 
         frames = []
+        columns_filter = ["source_object", "event_time", "location_name", "location_lat", "location_lon", "location_type",
+                              "ingested_at_utc", "weather_temperature", "weather_humidity", "weather_windSpeed", "weather_cloudCover",
+                              "weather_precipitationProbability"]
+        columns_name_map = {"data_values_temperature": "weather_temperature", "data_values_humidity":"weather_humidity",
+                            "data_values_windSpeed":"weather_windSpeed", "data_values_cloudCover":"weather_cloudCover",
+                            "data_values_precipitationProbability":"weather_precipitationProbability", "data_time":"event_time"}
         for json_filename in previous_hour_files:
-            with open(json_filename, 'r') as json_file:
+            with open(json_filename, 'r', encoding='utf-8') as json_file:
                 current_json = json.load(json_file)
 
+                #validation
+                if not validate_json(current_json, json_filename, logger):
+                    continue
+
                 df = pd.json_normalize(current_json, sep='_')
+                df = df.rename(columns=columns_name_map)
+                df["source_object"] = [json_filename]
+                df["ingested_at_utc"] = [pendulum.now()]
+                df = df.reindex(columns=columns_filter) #filter and fill missing columns with None 
 
                 frames.append(df)
+
+        #no valid jsons
+        if not frames:
+            logger.info("There were no valid JSON files for the last hour ")
 
         result = pd.concat(frames)
         result.to_csv(f'/opt/airflow/include/silver_weather/{filename}.csv', index=False)
