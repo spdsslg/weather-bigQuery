@@ -20,7 +20,7 @@ response = requests.get(url, headers=headers)
 dt = datetime.datetime.strptime(response.json()['data']['time'], '%Y-%m-%dT%H:%M:%SZ')
 raw_file_path = f"./include/weather/year={dt.year}/month={dt.month}/day={dt.day}/hour={dt.hour}"
 Path(raw_file_path).mkdir(parents=True, exist_ok=True)
-with open(f"{raw_file_path}/file_{dt.minute}minute.json", 'w', encoding='utf-8') as file:
+with open(raw_file_path, 'w', encoding='utf-8') as file:
     json.dump(response.json(), file, ensure_ascii=False, indent=4)
 
 print(raw_file_path)

@@ -1,4 +1,7 @@
 from airflow.sdk import dag, task, TaskInstance #type:ignore
+from airflow.sdk.exceptions import AirflowException
+from airflow.providers.google.cloud.hooks.gcs import GCSHook
+from pathlib import Path
 import pendulum
 from pendulum import datetime
 import glob
@@ -20,6 +23,13 @@ def validate_json(current_json, json_filename, logger):
     for col in values_dict:
         col_value = values_dict.get(col)
         if type(col_value) not in (int, float):
+            return False
+
+    #check if the fields live within the range
+    valid_ranges = {"humidity":[0,100], "cloudCover":[0,100], "precipitationProbability":[0,100],
+                    "temperature":[-90, 70], "windSpeed":[0,150]}
+    for col in valid_ranges:
+        if col in values_dict and (values_dict[col]<valid_ranges[col][0] or values_dict[col]>valid_ranges[col][1]):
             return False
 
     return True
@@ -60,14 +70,18 @@ def load_to_silver():
                 df["source_object"] = [json_filename]
                 df["ingested_at_utc"] = [pendulum.now()]
                 df = df.reindex(columns=columns_filter) #filter and fill missing columns with None 
-
+        
                 frames.append(df)
+
+        df = df.drop_duplicates(subset=['location_name', 'event_time'])    
 
         #no valid jsons
         if not frames:
-            logger.info("There were no valid JSON files for the last hour ")
+            logger.error('There were no valid JSON files within the last hour')
+            raise AirflowException('No valid JSONs occurred during the last hour! DAG is failed')
 
         result = pd.concat(frames)
+        Path('/opt/airflow/include/silver_weather').mkdir(parents=True, exist_ok=True)
         result.to_csv(f'/opt/airflow/include/silver_weather/{filename}.csv', index=False)
 
     transform_and_load()
