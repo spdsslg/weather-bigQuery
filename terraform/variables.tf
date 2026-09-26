@@ -12,3 +12,8 @@ variable "dataset_name"{
     type = string
     description = "Name of the BigQuery gold layer dataset"
 }
+
+variable "api_key_value"{
+    type = string
+    description = "API key that will be placed to the secret manager"
+}
