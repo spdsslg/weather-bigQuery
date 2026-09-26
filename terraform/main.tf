@@ -59,7 +59,7 @@ resource "google_cloudfunctions2_function" "function" {
     location = var.region_name
 
     build_config {
-        runtime = "python310" 
+        runtime = "python314" 
         #must match the function name in the cloud function `main.py` source code
         entry_point = "main"
         source{
