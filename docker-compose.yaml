@@ -53,7 +53,7 @@ x-airflow-common:
   build: .
   platform: linux/amd64
   secrets:
-    - my_gcp_secret #remove if no
+    - my_gcp_secret #remove if no secrets
   env_file:
     - ${ENV_FILE_PATH:-.env}
   environment:
@@ -80,7 +80,7 @@ x-airflow-common:
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
     AIRFLOW_CONN_FS_DEFAULT: '{"conn_type": "fs", "extra": {"path": "/opt/airflow/include"}}'
-    AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT: 'google-cloud-platform://?key_path=/run/secrets/my_gcp_secret'
+    GOOGLE_APPLICATION_CREDENTIALS: '/run/secrets/my_gcp_secret'
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs

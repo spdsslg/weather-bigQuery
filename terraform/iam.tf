@@ -47,6 +47,12 @@ resource "google_bigquery_dataset_iam_member" "airflow_bigquery_editor"{
     member = "serviceAccount:${google_service_account.airflow_sa.email}"
 }
 
+resource "google_bigquery_dataset_iam_member" "airflow_bigquery_job_creator"{
+    dataset_id = google_bigquery_dataset.weather_gold_dataset.dataset_id
+    role = "roles/bigquery.jobUser"
+    member = "serviceAccount:${google_service_account.airflow_sa.email}"
+}
+
 #put the api value to the secret manager
 resource "google_secret_manager_secret_version" "weather-api-key-value"{
     secret = google_secret_manager_secret.weather_api_key.id
