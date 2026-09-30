@@ -47,16 +47,27 @@ resource "google_bigquery_dataset_iam_member" "airflow_bigquery_editor"{
     member = "serviceAccount:${google_service_account.airflow_sa.email}"
 }
 
-resource "google_bigquery_dataset_iam_member" "airflow_bigquery_job_creator"{
-    dataset_id = google_bigquery_dataset.weather_gold_dataset.dataset_id
+resource "google_project_iam_member" "airflow_bigquery_job_creator"{
+    project = google_bigquery_dataset.weather_gold_dataset.project
     role = "roles/bigquery.jobUser"
     member = "serviceAccount:${google_service_account.airflow_sa.email}"
 }
 
 #put the api value to the secret manager
-resource "google_secret_manager_secret_version" "weather-api-key-value"{
+resource "google_secret_manager_secret_version" "weather_api_key_value"{
     secret = google_secret_manager_secret.weather_api_key.id
     secret_data = var.api_key_value
+}
+
+#create a key to allow docker and then airflow to communicate with gcp
+#automatically stores the key as json file in secrets folder
+resource "google_service_account_key" "airflow_sa_key"{
+    service_account_id = google_service_account.airflow_sa.name
+}
+
+resource "local_sensitive_file" "gcp_local_authentication_key_file"{
+    content = base64decode(google_service_account_key.airflow_sa_key.private_key)
+    filename = "${path.module}/../secrets/gcp_weather_key.json"
 }
 
 # #setting roles to invoke and run the cloud function

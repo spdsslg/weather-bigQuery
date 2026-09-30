@@ -1,10 +1,10 @@
-from airflow.sdk import dag, task, TaskInstance #type:ignore
+from airflow.sdk import dag, task, Param, TaskInstance, get_current_context #type:ignore
 from airflow.sdk.exceptions import AirflowException
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQueryOperator
-from pathlib import Path
 import pendulum
 from pendulum import datetime
+import datetime as dt
 import pandas as pd
 import json
 import logging
@@ -37,7 +37,10 @@ def validate_json(current_json, json_filename, logger):
     return True
 
 @dag(start_date=datetime(2026,9,23),
-     schedule='@hourly')
+     schedule='@hourly',
+     params={
+         "source_path": Param(None, type=["null","string"])
+     })
 def weather_silver_processing():
 
     bucket_bronze_name = 'weather-bigquery-test-bronze'
@@ -49,16 +52,23 @@ def weather_silver_processing():
     TABLE_NAME = os.getenv('TABLE_NAME')
 
     @task
-    def transform_and_load(run_id=None, data_interval_start=None, ts=None):
+    def transform_and_load(data_interval_start=None, ts=None):
+
         logger = logging.getLogger(__name__)
         hook = GCSHook('google_cloud_default')
 
-        dt = data_interval_start
-        previous_hour_files = hook.list(bucket_bronze_name, match_glob=f'bronze/weather/realtime/*/year={dt.year}/month={dt.month}/day={dt.day}/hour={dt.hour}/*.json') #type:ignore
+        ctx = get_current_context()
+    
+        match_glob = f'bronze/weather/realtime/*/year={data_interval_start.year}/month={data_interval_start.month}/day={data_interval_start.day}/hour={data_interval_start.hour}/*.json' #type:ignore
+        files_to_process = hook.list(bucket_bronze_name, match_glob=match_glob)
+        #account for possible parameters
+        if(ctx["params"]["source_path"]):
+            files_to_process = hook.list(bucket_bronze_name, prefix=ctx["params"]["source_path"])
         
-        if not previous_hour_files:
-            logger.warning("No JSON files occurred within the previous hour!")
-            raise AirflowException('No JSON files occurred within the previous hour! DAG is failed')
+        
+        if not files_to_process:
+            logger.warning("No JSON files occurred within the previous hour! Or, if you provided a source path parameter, there are no JSON files with this prefix")
+            raise AirflowException('No JSON files occurred within the previous hour, or there are no JSON files with the provided source path(if provided)! DAG is failed')
 
         frames = {}
         columns_filter = ["source_object", "event_time", "location_name", "location_lat", "location_lon", "location_type",
@@ -67,12 +77,11 @@ def weather_silver_processing():
         columns_name_map = {"data_values_temperature": "weather_temperature", "data_values_humidity":"weather_humidity",
                             "data_values_windSpeed":"weather_windSpeed", "data_values_cloudCover":"weather_cloudCover",
                             "data_values_precipitationProbability":"weather_precipitationProbability", "data_time":"event_time"}
-        for json_filename in previous_hour_files:
-            #TODO: I need to account for the situation when several distinct locations are read.
-            #      So i guess i will dictionary for frames. JSON should be opened with GSCHook
-            #      All transformations remain the same. But frames.append should be changed to frames[location].append
-            #      Then `result` should also be a list of dictionaries, where key will be location and value a concatenated dataframe of the corresponding frame entry.
-            #      Then loop over the `result` and save with the respective location name.
+        for json_filename in files_to_process:
+        
+            if(not json_filename.endswith('.json')):
+                continue
+
             file_bytes = hook.download(bucket_bronze_name, json_filename)
             current_json = json.loads(file_bytes) #type:ignore 
 
@@ -86,51 +95,54 @@ def weather_silver_processing():
             df["ingested_at_utc"] = [pendulum.now()]
             df = df.reindex(columns=columns_filter) #filter and fill missing columns with None 
 
+            #i assumed there can be different location names per one batch of loading
             location = df['location_name'][0].split(',')[0] #extracts the name of the city
             df['location_name'] = location
             frames.setdefault(location, []).append(df)
 
         #no valid jsons
         if not frames:
-            logger.error('There were no valid JSON files within the last hour')
-            raise AirflowException('No valid JSONs occurred during the last hour! DAG is failed')
+            logger.error('After validation, there are no valid JSON files within the last hour, or that have the provided source path prefix(if provided)')
+            raise AirflowException('No valid JSONs after validation! DAG is failed')
 
-        #TODO: Here should be a for loop that will loop through keys in frames dict. 
-        #      For every key it will concatenate all the frames in the corresponding value list and save it to silver bucket
+        #Save separate location data into separate csv files
         created_filenames = []
         for city in frames:
-            result = pd.concat(frames[city])
+            result = pd.concat(frames[city], ignore_index=True)
             result = result.drop_duplicates(subset=['location_name', 'event_time'])    
 
-            filename = f'silver/weather/realtime/{city}/year={dt.year}/month={dt.month}/day={dt.day}/hour={dt.hour}/{ts}.csv' #type:ignore
+            dt_event_time = dt.datetime.strptime(result['event_time'][0], '%Y-%m-%dT%H:%M:%SZ')
+            filename = f'silver/weather/realtime/{city}/year={dt_event_time.year}/month={dt_event_time.month}/day={dt_event_time.day}/hour={dt_event_time.hour}/{ts}.csv' #type:ignore
             created_filenames.append(filename)
-            hook.upload(bucket_silver_name, filename, data=result.to_csv(index=False))
+            hook.upload(bucket_silver_name, filename, data=result.to_csv(index=False, header=False))
 
         return created_filenames
+
+    created_files = transform_and_load()
 
     load_csv = GCSToBigQueryOperator(
         task_id="gcs_to_bigquery",
         bucket=bucket_silver_name,
-        source_objects=transform_and_load(),
+        source_objects=created_files,
         destination_project_dataset_table=f"{PROJECT_ID}.{BQ_DATASET}.{TABLE_NAME}",
         schema_fields=[
             {"name": "source_object", "type": "STRING", "mode": "REQUIRED"},
             {"name": "event_time", "type": "TIMESTAMP", "mode": "REQUIRED"},
             {"name": "location_name", "type": "STRING", "mode": "REQUIRED"},
-            {"name": "location_lat", "type": "NUMERIC", "mode": "NULLABLE"},
-            {"name": "location_lon", "type": "NUMERIC", "mode": "NULLABLE"},
+            {"name": "location_lat", "type": "FLOAT64", "mode": "NULLABLE"},
+            {"name": "location_lon", "type": "FLOAT64", "mode": "NULLABLE"},
             {"name": "location_type", "type": "STRING", "mode": "NULLABLE"},
             {"name": "ingested_at_utc", "type": "TIMESTAMP", "mode": "REQUIRED"},
-            {"name": "weather_temperature", "type": "NUMERIC", "mode": "NULLABLE"},
-            {"name": "weather_humidity", "type": "NUMERIC", "mode": "NULLABLE"},
-            {"name": "weather_windSpeed", "type": "NUMERIC", "mode": "NULLABLE"},
-            {"name": "weather_cloudCover", "type": "NUMERIC", "mode": "NULLABLE"},
-            {"name": "weather_precipitationProbability", "type": "NUMERIC", "mode": "NULLABLE"}
+            {"name": "weather_temperature", "type": "FLOAT64", "mode": "NULLABLE"},
+            {"name": "weather_humidity", "type": "FLOAT64", "mode": "NULLABLE"},
+            {"name": "weather_windSpeed", "type": "FLOAT64", "mode": "NULLABLE"},
+            {"name": "weather_cloudCover", "type": "FLOAT64", "mode": "NULLABLE"},
+            {"name": "weather_precipitationProbability", "type": "FLOAT64", "mode": "NULLABLE"}
         ],
         write_disposition="WRITE_APPEND",
         autodetect=False
     )
 
-    transform_and_load()>>load_csv
+    created_files>>load_csv
                     
 weather_silver_processing()
