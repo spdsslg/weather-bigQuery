@@ -1,4 +1,4 @@
-from airflow.sdk import dag, task, Param, TaskInstance, get_current_context #type:ignore
+from airflow.sdk import dag, task, Param, TaskInstance, get_current_context, CronDataIntervalTimetable #type:ignore
 from airflow.sdk.exceptions import AirflowException
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 from airflow.providers.google.cloud.transfers.gcs_to_bigquery import GCSToBigQueryOperator
@@ -37,7 +37,7 @@ def validate_json(current_json, json_filename, logger):
     return True
 
 @dag(start_date=datetime(2026,9,23),
-     schedule='@hourly',
+     schedule=CronDataIntervalTimetable('@hourly', timezone="UTC"),
      params={
          "source_path": Param(None, type=["null","string"])
      })
@@ -65,7 +65,7 @@ def weather_silver_processing():
         if(ctx["params"]["source_path"]):
             files_to_process = hook.list(bucket_bronze_name, prefix=ctx["params"]["source_path"])
         
-        
+        logger.info('Interval start: %s', data_interval_start)
         if not files_to_process:
             logger.warning("No JSON files occurred within the previous hour! Or, if you provided a source path parameter, there are no JSON files with this prefix")
             raise AirflowException('No JSON files occurred within the previous hour, or there are no JSON files with the provided source path(if provided)! DAG is failed')
@@ -99,6 +99,7 @@ def weather_silver_processing():
             location = df['location_name'][0].split(',')[0] #extracts the name of the city
             df['location_name'] = location
             frames.setdefault(location, []).append(df)
+            logger.info('Filename: %s', json_filename)
 
         #no valid jsons
         if not frames:
@@ -109,7 +110,9 @@ def weather_silver_processing():
         created_filenames = []
         for city in frames:
             result = pd.concat(frames[city], ignore_index=True)
-            result = result.drop_duplicates(subset=['location_name', 'event_time'])    
+            result = result.drop_duplicates(subset=['location_name', 'event_time'])
+            logger.info('data: %s', result)
+            logger.info('date_interval_start: %s', data_interval_start)
 
             dt_event_time = dt.datetime.strptime(result['event_time'][0], '%Y-%m-%dT%H:%M:%SZ')
             filename = f'silver/weather/realtime/{city}/year={dt_event_time.year}/month={dt_event_time.month}/day={dt_event_time.day}/hour={dt_event_time.hour}/{ts}.csv' #type:ignore

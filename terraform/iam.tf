@@ -94,6 +94,7 @@ resource "google_cloud_scheduler_job" "invoke_cloud_function" {
   schedule = "*/10 * * * *" #every 10 mins
   project = google_cloudfunctions2_function.function.project
   region = google_cloudfunctions2_function.function.location
+#   paused = true #UNCOMMENT TO PAUSE SCHEDULING
 
   http_target {
     uri         = google_cloudfunctions2_function.function.service_config[0].uri
