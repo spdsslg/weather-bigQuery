@@ -3,7 +3,7 @@
 
 The purpose of this mini project is to automate the collection and processing of Warsaw weather data, making it available in BigQuery for analysis over time. It uses Tomorrow.io API to retrieve current weather data.
 
-Every 10 minutes, a Cloud Function requests the latest weather data and stores the raw JSON response in the Google Cloud Storage (GCS) bronze bucket. Every hour, an Airflow DAG processes the previous hour's files: it validates the data, flattens the JSON structure, and selects the relevant columns using Pandas. The processed data is saved as CSV files in the GCS silver bucket, then loaded into a BigQuery table.
+Every 10 minutes a Cloud Function makes a request to the API, receives a JSON and stores it in the GCS "bronze layer" bucket. Every hour Airflow executes a DAG that validates every JSON for the last hour, flattens it and takes relevant columns. Those transformations are preformed with Pandas. Filtered data for the last hour is saved as a .csv file in the "silver layer" GCS bucket. The same data, after being saved to the silver layer, is saved to the BigQuery table.
 
 The DAG can also be triggered manually with a source prefix to select specific files for processing.
 
