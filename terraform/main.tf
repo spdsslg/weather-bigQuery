@@ -40,8 +40,8 @@ resource "google_storage_bucket" "function_bucket" {
 
 data "archive_file" "archive" {
     type = "zip"
-    source_dir = "../src/"
-    output_path = "./tmp/function.zip"
+    source_dir = "${var.source_dir}"
+    output_path = "${path.module}/function.zip"
 }
 
 resource "google_storage_bucket_object" "zip" {

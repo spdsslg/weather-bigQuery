@@ -7,7 +7,9 @@ Every 10 minutes a Cloud Function makes a request to the API, receives a JSON an
 
 The DAG can also be triggered manually with a source prefix to select specific files for processing.
 
-**The cloud infrastructure is provisioned and managed with Terraform. Airflow runs locally in Docker containers.**
+**The cloud infrastructure is provisioned and managed with Terraform and Terragrunt. Airflow runs locally in Docker containers.**
+
+Both Terraform and Terragrunt should be installed. Terragrunt automatically creates a remote gcs backend for the project state file.
 
 Secret Manager stores the Tomorrow.io API key. Terraform accepts the key through the `api_key_value` variable, alongside `project_name`, `region_name`, and `dataset_name`. These values can be supplied through `terraform.tfvars` instead of entering them with each Terraform command.
 
@@ -15,14 +17,29 @@ IAM roles and service accounts control access to Google Cloud resources, followi
 
 ## How to run
 
-First, the infrastructure should be created. 
+First, the infrastructure should be created. By default Terragrunt creates a gcs bucket for backend in a project named `weather-bigquery-test`, but it is possible to change it by setting an environment variable `GOOGLE_WEATHER_PROJECT` to the desired project name.
+
+```bash
+export GOOGLE_WEATHER_PROJECT="<desired_project_name>"
+```
+
+During the infrastructure setup, Terragrunt/Terraform uses user account to create the infrastructure. To setup Application Default Credentials (ADC), run
+
+```bash
+gcloud auth application-default login
+```
+
+Then proceed with
+
 ```Terraform
 cd terraform
-terraform init
-terraform plan
+terragrunt init --backend-bootstrap
+terragrunt plan
 #check if the plan is correct
-terraform apply
+terragrunt apply
 ```
+
+Note that both `Terragrunt` and `Terraform` should be installed prior to executing commands.
 
 After it, you need to start Airflow using 
 ```

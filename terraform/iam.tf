@@ -67,7 +67,7 @@ resource "google_service_account_key" "airflow_sa_key"{
 
 resource "local_sensitive_file" "gcp_local_authentication_key_file"{
     content = base64decode(google_service_account_key.airflow_sa_key.private_key)
-    filename = "${path.module}/../secrets/gcp_weather_key.json"
+    filename = "${var.secrets_dir}/gcp_weather_key.json"
 }
 
 #setting roles to invoke and run the cloud function
@@ -94,7 +94,7 @@ resource "google_cloud_scheduler_job" "invoke_cloud_function" {
   schedule = "*/10 * * * *" #every 10 mins
   project = google_cloudfunctions2_function.function.project
   region = google_cloudfunctions2_function.function.location
-#   paused = true #UNCOMMENT TO PAUSE SCHEDULING
+  paused = true #UNCOMMENT TO PAUSE SCHEDULING
 
   http_target {
     uri         = google_cloudfunctions2_function.function.service_config[0].uri
